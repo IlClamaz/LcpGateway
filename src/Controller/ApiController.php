@@ -27,7 +27,7 @@ class ApiController extends AbstractActionController
         }
 
         $id = (int)$this->params()->fromRoute('id');
-        $profileTarget = $this->params()->fromQuery('profile', 'engine');
+        $profileTarget = $this->params()->fromQuery('profile', 'default');
 
         if ($id <= 0) {
             $response->setStatusCode(400);

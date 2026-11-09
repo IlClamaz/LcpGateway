@@ -64,17 +64,22 @@ class ProfileManager
     }
 
     /**
-     * Resolves the profile based on the item's resource class and requested target profile (e.g. 'engine' or 'web').
+     * Resolves the profile based on the item's resource class and requested target context (e.g. 'web', 'engine', 'default').
+     * If a specific profile is not found for the class and context, falls back hierarchically to 'default'.
      */
-    public function resolveProfile(?string $resourceClassTerm, string $targetProfile): array
+    public function resolveProfile(?string $resourceClassTerm, string $targetProfile = 'default'): array
     {
         $profiles = $this->getProfiles();
-        $targetProfile = strtolower(trim($targetProfile));
+        $targetProfile = strtolower(trim($targetProfile ?: 'default'));
 
-        // 1. Exact match on resource class and profile_target
+        $getContext = function(array $p): string {
+            return strtolower(trim($p['context'] ?? $p['profile_target'] ?? 'default'));
+        };
+
+        // 1. Exact match on resource class and context
         if ($resourceClassTerm) {
             foreach ($profiles as $p) {
-                if (strtolower($p['profile_target']) === $targetProfile) {
+                if ($getContext($p) === $targetProfile) {
                     if (strcasecmp($p['resource_class'], $resourceClassTerm) === 0) {
                         return $p;
                     }
@@ -84,7 +89,7 @@ class ProfileManager
             // 2. Loose match (e.g. "Ambiente" matching "lcp_form:Ambiente")
             $cleanTerm = strtolower(substr($resourceClassTerm, strpos($resourceClassTerm, ':') !== false ? strpos($resourceClassTerm, ':') + 1 : 0));
             foreach ($profiles as $p) {
-                if (strtolower($p['profile_target']) === $targetProfile) {
+                if ($getContext($p) === $targetProfile) {
                     $pTerm = strtolower(substr($p['resource_class'], strpos($p['resource_class'], ':') !== false ? strpos($p['resource_class'], ':') + 1 : 0));
                     if ($cleanTerm === $pTerm) {
                         return $p;
@@ -93,26 +98,33 @@ class ProfileManager
             }
         }
 
-        // 3. Fallback to wildcard '*' for this targetProfile
+        // 3. Fallback to wildcard '*' for this target context
         foreach ($profiles as $p) {
-            if ($p['resource_class'] === '*' && strtolower($p['profile_target']) === $targetProfile) {
+            if ($p['resource_class'] === '*' && $getContext($p) === $targetProfile) {
                 return $p;
             }
         }
 
-        // 4. Default fallback to first available profile
+        // 4. Default fallback: search for profile with id 'default' or context 'default'
+        foreach ($profiles as $p) {
+            if ($p['id'] === 'default' || $getContext($p) === 'default' || strcasecmp($p['name'] ?? '', 'default') === 0) {
+                return $p;
+            }
+        }
+
+        // 5. Ultimate fallback if default profile is missing
         return $profiles[0] ?? [
-            'id' => 'fallback',
-            'name' => 'Default Fallback',
+            'id' => 'default',
+            'name' => 'Default',
+            'context' => 'default',
             'resource_class' => '*',
-            'profile_target' => $targetProfile,
-            'resolve_nextcloud_webdav' => ($targetProfile === 'engine'),
-            'include_events' => true,
-            'include_tree' => true,
+            'description' => 'Profilo predefinito di fallback',
+            'resolve_nextcloud_webdav' => false,
+            'include_events' => false,
+            'include_tree' => false,
             'fields' => [
-                'o:id' => 'id',
-                'o:title' => 'title',
-                'lcp_form:has_URI' => 'media_uri',
+                'dcterms:title' => 'Title',
+                'dcterms:description' => 'Description',
             ]
         ];
     }

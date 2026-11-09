@@ -31,19 +31,17 @@ class AdminController extends AbstractActionController
     {
         $id = $this->params()->fromRoute('id');
         $isNew = empty($id);
+        
         $profile = $isNew ? [
-            'id' => 'custom_' . time(),
-            'name' => 'Nuovo Profilo',
-            'resource_class' => '*',
-            'profile_target' => 'engine',
+            'id' => '',
+            'name' => '',
+            'context' => '',
+            'resource_class' => '',
             'description' => '',
-            'resolve_nextcloud_webdav' => true,
-            'include_events' => true,
-            'include_tree' => true,
-            'fields' => [
-                'o:id' => 'id',
-                'o:title' => 'title',
-            ]
+            'resolve_nextcloud_webdav' => false,
+            'include_events' => false,
+            'include_tree' => false,
+            'fields' => [],
         ] : $this->profileManager->getProfileById($id);
 
         if (!$profile) {
@@ -53,27 +51,54 @@ class AdminController extends AbstractActionController
 
         if ($this->getRequest()->isPost()) {
             $post = $this->params()->fromPost();
-            $profile['name'] = trim($post['name'] ?? $profile['name']);
-            $profile['resource_class'] = trim($post['resource_class'] ?? '*');
-            $profile['profile_target'] = strtolower(trim($post['profile_target'] ?? 'engine'));
-            $profile['description'] = trim($post['description'] ?? '');
-            $profile['resolve_nextcloud_webdav'] = !empty($post['resolve_nextcloud_webdav']);
-            $profile['include_events'] = !empty($post['include_events']);
-            $profile['include_tree'] = !empty($post['include_tree']);
+            $name = trim($post['name'] ?? '');
+            $context = strtolower(trim($post['context'] ?? 'default'));
+            $resourceClass = trim($post['resource_class'] ?? '*');
+            $description = trim($post['description'] ?? '');
+            $resolveWebDav = !empty($post['resolve_nextcloud_webdav']);
+            $includeEvents = !empty($post['include_events']);
+            $includeTree = !empty($post['include_tree']);
 
-            // Parse custom fields mapping (textarea with lines "omeka_property => alias")
-            $rawFields = $post['raw_fields'] ?? '';
+            // Parse selected fields
             $fields = [];
-            foreach (preg_split('/[\r\n]+/', $rawFields) as $line) {
-                $line = trim($line);
-                if (empty($line) || str_starts_with($line, '#')) continue;
-                if (str_contains($line, '=>')) {
-                    [$k, $v] = explode('=>', $line, 2);
-                    $fields[trim($k)] = trim($v);
-                } else {
-                    $fields[$line] = $line;
+            if (!empty($post['fields_json'])) {
+                $decoded = json_decode($post['fields_json'], true);
+                if (is_array($decoded)) {
+                    $fields = $decoded;
+                }
+            } elseif (!empty($post['field_terms']) && is_array($post['field_terms'])) {
+                foreach ($post['field_terms'] as $idx => $term) {
+                    $term = trim($term);
+                    $label = trim($post['field_labels'][$idx] ?? $term);
+                    if ($term !== '') {
+                        $fields[$term] = $label;
+                    }
                 }
             }
+
+            if ($isNew) {
+                $cleanContext = preg_replace('/[^a-z0-9]+/', '_', strtolower($context ?: 'custom'));
+                $cleanRc = preg_replace('/[^a-z0-9]+/', '_', strtolower(str_replace([':', '/'], '_', $resourceClass)));
+                $baseId = trim($cleanContext . '_' . $cleanRc, '_');
+                if (empty($baseId)) {
+                    $baseId = 'profile_' . time();
+                }
+                $candidate = $baseId;
+                $counter = 1;
+                while ($this->profileManager->getProfileById($candidate)) {
+                    $candidate = $baseId . '_' . (++$counter);
+                }
+                $profile['id'] = $candidate;
+            }
+
+            $profile['name'] = $name ?: ('Profilo ' . $context);
+            $profile['context'] = $context;
+            $profile['profile_target'] = $context; // Keep backwards compatibility
+            $profile['resource_class'] = $resourceClass;
+            $profile['description'] = $description;
+            $profile['resolve_nextcloud_webdav'] = $resolveWebDav;
+            $profile['include_events'] = $includeEvents;
+            $profile['include_tree'] = $includeTree;
             $profile['fields'] = $fields;
 
             $this->profileManager->saveProfile($profile);
@@ -81,25 +106,89 @@ class AdminController extends AbstractActionController
             return $this->redirect()->toRoute('admin/lcp-gateway');
         }
 
-        // Fetch available Resource Classes from Omeka S for convenience
+        $apiErrors = [];
+
+        // Fetch available Resource Classes from Omeka S (limit > 0 to retrieve content)
         $resourceClasses = [];
         try {
-            $rcs = $this->api->search('resource_classes', ['limit' => 200])->getContent();
+            $rcs = $this->api->search('resource_classes', ['limit' => 1000])->getContent();
             foreach ($rcs as $rc) {
-                $resourceClasses[] = $rc->term();
+                $resourceClasses[] = [
+                    'id' => $rc->id(),
+                    'term' => $rc->term(),
+                    'label' => $rc->label() ?: $rc->term(),
+                ];
             }
-        } catch (\Exception $e) {}
+            usort($resourceClasses, fn($a, $b) => strcasecmp($a['label'], $b['label']));
+        } catch (\Throwable $e) {
+            $apiErrors[] = 'Resource Classes: ' . $e->getMessage();
+        }
+
+        // Fetch available Resource Templates and their associated properties
+        $resourceTemplates = [];
+        try {
+            $rts = $this->api->search('resource_templates', ['limit' => 500])->getContent();
+            foreach ($rts as $rt) {
+                $rc = $rt->resourceClass();
+                $props = [];
+                foreach ($rt->resourceTemplateProperties() as $rtp) {
+                    $prop = $rtp->property();
+                    if ($prop) {
+                        $props[] = [
+                            'term' => $prop->term(),
+                            'label' => $prop->label() ?: $prop->term(),
+                        ];
+                    }
+                }
+                $resourceTemplates[] = [
+                    'id' => $rt->id(),
+                    'label' => $rt->label(),
+                    'resource_class_id' => $rc ? $rc->id() : null,
+                    'resource_class_term' => $rc ? $rc->term() : null,
+                    'properties' => $props,
+                ];
+            }
+        } catch (\Throwable $e) {
+            $apiErrors[] = 'Resource Templates: ' . $e->getMessage();
+        }
+
+        // Fetch all Properties for live search
+        $allProperties = [];
+        try {
+            $props = $this->api->search('properties', ['limit' => 5000])->getContent();
+            foreach ($props as $p) {
+                $vocab = $p->vocabulary();
+                $allProperties[] = [
+                    'id' => $p->id(),
+                    'term' => $p->term(),
+                    'label' => $p->label() ?: $p->term(),
+                    'vocab' => $vocab ? $vocab->label() : '',
+                    'vocab_prefix' => $vocab ? $vocab->prefix() : '',
+                ];
+            }
+            usort($allProperties, fn($a, $b) => strcasecmp($a['label'], $b['label']));
+        } catch (\Throwable $e) {
+            $apiErrors[] = 'Properties: ' . $e->getMessage();
+        }
 
         return new ViewModel([
             'profile' => $profile,
             'isNew' => $isNew,
             'resourceClasses' => $resourceClasses,
+            'resourceTemplates' => $resourceTemplates,
+            'allProperties' => $allProperties,
+            'apiErrors' => $apiErrors,
         ]);
     }
 
     public function deleteAction()
     {
         $id = $this->params()->fromRoute('id');
+        if ($id === 'default') {
+            $this->messenger()->addError("Il profilo 'default' è il fallback di sistema e non può essere eliminato.");
+            return $this->redirect()->toRoute('admin/lcp-gateway');
+        }
+
         if ($id) {
             $this->profileManager->deleteProfile($id);
             $this->messenger()->addSuccess("Profilo rimosso.");
@@ -111,14 +200,14 @@ class AdminController extends AbstractActionController
     {
         $module = new \LcpGateway\Module();
         $this->profileManager->saveProfiles($module->getDefaultProfiles());
-        $this->messenger()->addSuccess("Profili reimpostati ai valori di default standard LCP.");
+        $this->messenger()->addSuccess("Profili reimpostati al profilo standard 'default'.");
         return $this->redirect()->toRoute('admin/lcp-gateway');
     }
 
     public function previewAction()
     {
         $itemId = (int)$this->params()->fromQuery('item_id', 0);
-        $profileTarget = $this->params()->fromQuery('profile', 'engine');
+        $profileTarget = $this->params()->fromQuery('profile', 'default');
         $outputJson = '';
 
         if ($itemId > 0) {

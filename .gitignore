@@ -1,0 +1,5 @@
+# Script di aggiornamento locale e credenziali di deploy
+Aggiorna_LcpGateway.bat
+.lcp_deploy_config.txt
+*.lcp_deploy_config.txt
+LcpGateway.lcp_deploy_config.txt

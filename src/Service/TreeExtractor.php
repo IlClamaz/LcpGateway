@@ -16,15 +16,14 @@ class TreeExtractor
     }
 
     /**
-     * Extracts an item and its associated graph based on the item's resource class and requested target profile.
+     * Extracts an item and its associated graph based on the item's resource class and requested target profile context.
      */
-    public function extract(int $itemId, string $targetProfile = 'engine'): array
+    public function extract(int $itemId, string $targetProfile = 'default'): array
     {
         try {
             $rootItem = $this->api->read('items', $itemId)->getContent();
         } catch (\Exception $e) {
             return [
-                'ok' => false,
                 'error' => "Item #$itemId not found: " . $e->getMessage(),
             ];
         }
@@ -32,15 +31,6 @@ class TreeExtractor
         $resourceClass = $rootItem->resourceClass();
         $classTerm = $resourceClass ? $resourceClass->term() : null;
         $profile = $this->profileManager->resolveProfile($classTerm, $targetProfile);
-
-        $result = [
-            'ok' => true,
-            'root_id' => $itemId,
-            'resource_class' => $classTerm,
-            'profile_applied' => $profile['name'] ?? $profile['id'],
-            'target_context' => $targetProfile,
-            'timestamp' => date('c'),
-        ];
 
         // If composite entity (e.g. Environment or include_tree is true)
         if (!empty($profile['include_tree'])) {
@@ -58,10 +48,10 @@ class TreeExtractor
 
                 $cClass = $item->resourceClass();
                 $cTerm = $cClass ? $cClass->term() : null;
+                // Hierarchically resolve child profile with the same target context, or fallback to default
                 $cProfile = ($currId === $itemId) ? $profile : $this->profileManager->resolveProfile($cTerm, $targetProfile);
 
                 $extracted = $this->normalizeItem($item, $cProfile);
-                $tree[$currId] = $extracted;
 
                 // Discover components and areas
                 $componentIds = $this->extractResourceIds($item, 'lcp_form:is_composed_of_f');
@@ -79,85 +69,81 @@ class TreeExtractor
                 }
             }
 
-            $result['tree'] = $tree;
-            $result['root_item'] = $tree[$itemId] ?? null;
+            $result = [
+                'tree' => $tree,
+            ];
 
             // Extract Environment Events if requested
             if (!empty($profile['include_events'])) {
                 $result['events'] = $this->extractEventsForEnvironment($itemId);
             }
-        } else {
-            // Single Item Extraction
-            $result['item'] = $this->normalizeItem($rootItem, $profile);
+
+            return $result;
         }
 
-        return $result;
+        // Single Item Extraction (clean output with only configured fields)
+        return [
+            'item' => $this->normalizeItem($rootItem, $profile),
+        ];
     }
 
     /**
-     * Normalizes an ItemRepresentation into clean key-value pairs according to profile fields.
+     * Normalizes an ItemRepresentation into clean key-value pairs using native property labels.
      */
     public function normalizeItem(ItemRepresentation $item, array $profile): array
     {
         $fields = $profile['fields'] ?? [];
         $resolveDav = !empty($profile['resolve_nextcloud_webdav']);
+        
         $out = [
             'id' => $item->id(),
-            'title' => $item->displayTitle(),
         ];
 
-        // Fallback defaults
-        $rc = $item->resourceClass();
-        $out['resource_class'] = $rc ? $rc->term() : null;
+        foreach ($fields as $omekaProperty => $fieldLabel) {
+            if (empty($fieldLabel)) {
+                $fieldLabel = $omekaProperty;
+            }
 
-        foreach ($fields as $omekaProperty => $aliasKey) {
             if ($omekaProperty === 'o:id') {
-                $out[$aliasKey] = $item->id();
+                $out[$fieldLabel] = $item->id();
                 continue;
             }
             if ($omekaProperty === 'o:title') {
-                $out[$aliasKey] = $item->displayTitle();
+                $out[$fieldLabel] = $item->displayTitle();
                 continue;
             }
 
             // Extract property values from Item
             $vals = $item->value($omekaProperty, ['all' => true]);
             if (empty($vals)) {
-                $out[$aliasKey] = null;
+                if ($omekaProperty === 'dcterms:title') {
+                    $out[$fieldLabel] = $item->displayTitle();
+                } else {
+                    $out[$fieldLabel] = null;
+                }
                 continue;
             }
 
-            // If it's a URI field (e.g. lcp_form:has_URI)
-            if (str_ends_with($omekaProperty, 'has_URI') || $aliasKey === 'media_uri' || $aliasKey === 'stream_url') {
+            // Nextcloud WebDAV URL resolution if enabled
+            if ($resolveDav && (str_ends_with($omekaProperty, 'has_URI') || stripos($fieldLabel, 'uri') !== false || stripos($fieldLabel, 'url') !== false)) {
                 $uri = (string)$vals[0]->uri();
                 if (empty($uri)) {
                     $uri = (string)$vals[0]->value();
                 }
-                if ($resolveDav) {
-                    $out[$aliasKey] = $this->resolveNextcloudWebDavUrl($uri);
-                    $out['original_uri'] = $uri;
-                } else {
-                    $out[$aliasKey] = $uri;
-                }
+                $out[$fieldLabel] = $this->resolveNextcloudWebDavUrl($uri);
                 continue;
             }
 
             if (count($vals) === 1) {
                 $v = $vals[0];
-                $out[$aliasKey] = $v->uri() ?: (string)$v->value();
+                $out[$fieldLabel] = $v->uri() ?: (string)$v->value();
             } else {
                 $arr = [];
                 foreach ($vals as $v) {
                     $arr[] = $v->uri() ?: (string)$v->value();
                 }
-                $out[$aliasKey] = $arr;
+                $out[$fieldLabel] = $arr;
             }
-        }
-
-        // Add thumbnail if present
-        $primaryMedia = $item->primaryMedia();
-        if ($primaryMedia) {
-            $out['thumbnail_url'] = $primaryMedia->thumbnailUrl('square') ?: $primaryMedia->thumbnailUrl('medium');
         }
 
         return $out;

@@ -1,5 +1,6 @@
 <?php
 $escape = $this->plugin('escapeHtml');
+$this->htmlElement('body')->appendAttribute('class', 'lcp-gateway-admin');
 ?>
 
 <div class="breadcrumbs">
@@ -8,86 +9,495 @@ $escape = $this->plugin('escapeHtml');
     <span><?php echo $isNew ? 'Nuovo Profilo' : 'Modifica Profilo'; ?></span>
 </div>
 
-<h1><?php echo $isNew ? 'Nuovo Profilo di Esportazione' : 'Modifica Profilo: ' . $escape($profile['name']); ?></h1>
+<div class="page-header" style="margin-bottom: 20px;">
+    <h1><?php echo $isNew ? 'Crea Nuovo Profilo di Esportazione' : 'Modifica Profilo: ' . $escape($profile['name']); ?></h1>
+    <p style="color: #666; margin-top: 4px;">
+        Configura le proprietà Omeka S da esportare tramite l'endpoint <code>/api/lcp/{id}?profile=...</code>
+    </p>
+</div>
 
-<form method="post" style="max-width: 800px; margin-top: 20px;">
-    <div class="field" style="margin-bottom: 16px;">
-        <label for="name" style="font-weight: bold; display: block; margin-bottom: 4px;">Nome Profilo</label>
-        <input type="text" id="name" name="name" value="<?php echo $escape($profile['name']); ?>" required style="width: 100%; padding: 8px;">
+<?php if (!empty($apiErrors)): ?>
+    <div style="background: #fef2f2; border-left: 4px solid #ef4444; padding: 12px 16px; border-radius: 4px; margin-bottom: 20px; color: #991b1b; font-size: 13px;">
+        <strong>Avviso durante il caricamento dei metadati da Omeka:</strong>
+        <ul style="margin: 6px 0 0 20px; padding: 0;">
+            <?php foreach ($apiErrors as $err): ?>
+                <li><?php echo $escape($err); ?></li>
+            <?php endforeach; ?>
+        </ul>
     </div>
+<?php endif; ?>
 
-    <div class="field" style="margin-bottom: 16px;">
-        <label for="description" style="font-weight: bold; display: block; margin-bottom: 4px;">Descrizione / Scopo</label>
-        <input type="text" id="description" name="description" value="<?php echo $escape($profile['description'] ?? ''); ?>" style="width: 100%; padding: 8px;">
-    </div>
+<form id="profile_form" method="post" style="max-width: 900px;">
+    <input type="hidden" id="fields_json" name="fields_json" value="<?php echo $escape(json_encode($profile['fields'] ?? [])); ?>">
+    <div id="hidden_field_inputs"></div>
 
-    <div style="display: flex; gap: 20px; margin-bottom: 16px;">
-        <div class="field" style="flex: 1;">
-            <label for="profile_target" style="font-weight: bold; display: block; margin-bottom: 4px;">Target Profilo</label>
-            <select id="profile_target" name="profile_target" style="width: 100%; padding: 8px;">
-                <option value="engine" <?php echo ($profile['profile_target'] === 'engine') ? 'selected' : ''; ?>>engine (Unity / Godot offline)</option>
-                <option value="web" <?php echo ($profile['profile_target'] === 'web') ? 'selected' : ''; ?>>web (Landing Page / Web App)</option>
-            </select>
-            <small style="color: #666;">Il valore passato nel parametro query <code>?profile=...</code></small>
+    <!-- SEZIONE 1: DATI GENERALI & CONTESTO -->
+    <div class="lcp-card" style="background: #fff; border: 1px solid #dcdcdc; border-radius: 6px; padding: 20px; margin-bottom: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+        <h3 style="margin-top: 0; margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 8px;">
+            1. Dati Generali & Contesto API
+        </h3>
+
+        <div style="display: flex; gap: 20px; margin-bottom: 16px;">
+            <div class="field" style="flex: 1;">
+                <label for="name" style="font-weight: bold; display: block; margin-bottom: 5px;">Nome Profilo *</label>
+                <input type="text" id="name" name="name" value="<?php echo $escape($profile['name']); ?>" required placeholder="Es. Ambiente Web, Narrativa Engine..." style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+            </div>
+
+            <div class="field" style="flex: 1;">
+                <label for="context" style="font-weight: bold; display: block; margin-bottom: 5px;">Contesto / Parametro API (<code>?profile=...</code>) *</label>
+                <input type="text" id="context" name="context" value="<?php echo $escape($profile['context'] ?? $profile['profile_target'] ?? ''); ?>" required placeholder="Es. default, web, engine" list="context_suggestions" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+                <datalist id="context_suggestions">
+                    <option value="default">default (Fallback universale)</option>
+                    <option value="web">web (Landing page, Web Viewer)</option>
+                    <option value="engine">engine (Unity, Godot, Unreal)</option>
+                </datalist>
+                <small style="color: #666; font-size: 11px; display: block; margin-top: 4px;">
+                    Valore specificato dal chiamante: <code>/api/lcp/{id}?profile=<strong>web</strong></code>
+                </small>
+            </div>
         </div>
 
-        <div class="field" style="flex: 1;">
-            <label for="resource_class" style="font-weight: bold; display: block; margin-bottom: 4px;">Resource Class Omeka</label>
-            <input type="text" id="resource_class" name="resource_class" list="rc_list" value="<?php echo $escape($profile['resource_class']); ?>" required style="width: 100%; padding: 8px;">
-            <datalist id="rc_list">
-                <option value="*">Qualsiasi classe (*)</option>
+        <div class="field" style="margin-bottom: 16px;">
+            <label for="description" style="font-weight: bold; display: block; margin-bottom: 5px;">Descrizione / Scopo</label>
+            <input type="text" id="description" name="description" value="<?php echo $escape($profile['description'] ?? ''); ?>" placeholder="Breve nota su chi e dove usa questo profilo" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+        </div>
+    </div>
+
+    <!-- SEZIONE 2: RESOURCE CLASS & TEMPLATE -->
+    <div class="lcp-card" style="background: #fff; border: 1px solid #dcdcdc; border-radius: 6px; padding: 20px; margin-bottom: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+        <h3 style="margin-top: 0; margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 8px;">
+            2. Selezione Resource Class & Resource Template
+        </h3>
+
+        <div class="field" style="margin-bottom: 16px;">
+            <label for="resource_class" style="font-weight: bold; display: block; margin-bottom: 5px;">
+                Resource Class Omeka * 
+                <span style="font-weight: normal; color: #666; font-size: 12px;">(disponibili: <?php echo count($resourceClasses); ?> classi)</span>
+            </label>
+            <select id="resource_class" name="resource_class" required style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px;">
+                <option value="*" <?php echo ($profile['resource_class'] === '*' || empty($profile['resource_class'])) ? 'selected' : ''; ?>>
+                    * &mdash; Qualsiasi classe (Fallback universale)
+                </option>
                 <?php foreach ($resourceClasses as $rc): ?>
-                    <option value="<?php echo $escape($rc); ?>"><?php echo $escape($rc); ?></option>
+                    <option value="<?php echo $escape($rc['term']); ?>" data-id="<?php echo $rc['id']; ?>" <?php echo ($profile['resource_class'] === $rc['term']) ? 'selected' : ''; ?>>
+                        <?php echo $escape($rc['label']); ?> (<?php echo $escape($rc['term']); ?>)
+                    </option>
                 <?php endforeach; ?>
-            </datalist>
-            <small style="color: #666;">Termine della Resource Class (es. <code>lcp_form:Ambiente</code>, <code>lcp_form:Narrativa</code> o <code>*</code>)</small>
+            </select>
+            <small style="color: #666; font-size: 11px; display: block; margin-top: 4px;">
+                Il profilo verrà applicato agli item appartenenti a questa classe quando viene richiesto il relativo contesto API.
+            </small>
+        </div>
+
+        <!-- Template Feedback & Selector Box -->
+        <div id="template_status_box" style="margin-top: 12px; padding: 12px 16px; border-radius: 4px; border: 1px solid #ddd; background: #fafafa; font-size: 13px;">
+            <div id="template_status_content"></div>
+            <div id="template_picker_container" style="display: none; margin-top: 10px;">
+                <label for="template_picker_select" style="font-weight: bold; display: block; margin-bottom: 4px;">
+                    Scegli il Resource Template da cui importare i campi base:
+                </label>
+                <select id="template_picker_select" style="width: 100%; padding: 6px; border: 1px solid #ccc; border-radius: 4px;">
+                </select>
+            </div>
         </div>
     </div>
 
-    <fieldset style="border: 1px solid #ccc; padding: 16px; border-radius: 4px; margin-bottom: 20px;">
-        <legend style="font-weight: bold; padding: 0 6px;">Comportamento Struttura & Media</legend>
+    <!-- SEZIONE 3: CAMPI ESPORTATI -->
+    <div class="lcp-card" style="background: #fff; border: 1px solid #dcdcdc; border-radius: 6px; padding: 20px; margin-bottom: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 8px;">
+            <h3 style="margin: 0;">
+                3. Proprietà Omeka Esportate
+            </h3>
+            <button type="button" class="button button-primary btn-open-search" style="font-size: 12px; padding: 6px 14px;">
+                <i class="fa fa-plus"></i> + Aggiungi Campo
+            </button>
+        </div>
+
+        <p style="font-size: 12px; color: #666; margin-top: 0; margin-bottom: 15px;">
+            Ciascuna proprietà verrà esportata nel JSON risultante utilizzando come chiave la sua <strong>Property Label</strong> nativa di Omeka S.
+        </p>
+
+        <table id="fields_table" style="width: 100%; border-collapse: collapse; margin-bottom: 15px;">
+            <thead>
+                <tr style="background: #f4f4f4; border-bottom: 2px solid #ddd; text-align: left;">
+                    <th style="padding: 8px; width: 40px;">#</th>
+                    <th style="padding: 8px;">Termine Omeka</th>
+                    <th style="padding: 8px;">Property Label (Chiave JSON)</th>
+                    <th style="padding: 8px; width: 100px; text-align: right;">Azione</th>
+                </tr>
+            </thead>
+            <tbody id="fields_tbody">
+                <!-- Generato dinamicamente via JS -->
+            </tbody>
+        </table>
+
+        <div style="display: flex; justify-content: flex-end;">
+            <button type="button" class="button button-secondary btn-open-search" style="font-size: 12px; padding: 6px 14px;">
+                <i class="fa fa-plus"></i> + Aggiungi Campo
+            </button>
+        </div>
+    </div>
+
+    <!-- SEZIONE 4: OPZIONI AVANZATE -->
+    <fieldset style="border: 1px solid #dcdcdc; padding: 16px 20px; border-radius: 6px; margin-bottom: 24px; background: #fff;">
+        <legend style="font-weight: bold; padding: 0 8px; font-size: 14px;">Comportamento Struttura & Media</legend>
         
-        <div style="margin-bottom: 10px;">
-            <label>
-                <input type="checkbox" name="include_tree" value="1" <?php echo !empty($profile['include_tree']) ? 'checked' : ''; ?>>
-                <strong>Estrai albero ricorsivo</strong> (percorri componenti e aree collegate se l'oggetto è un contenitore/ambiente)
+        <div style="margin-bottom: 12px;">
+            <label style="display: flex; align-items: flex-start; cursor: pointer;">
+                <input type="checkbox" name="include_tree" value="1" <?php echo !empty($profile['include_tree']) ? 'checked' : ''; ?> style="margin-top: 3px; margin-right: 10px;">
+                <div>
+                    <strong>Estrai albero ricorsivo</strong>
+                    <div style="font-size: 11px; color: #666;">
+                        Se l'item è un contenitore (es. Ambiente), percorre gerarchicamente componenti e aree collegate. Per ogni sotto-elemento cerca il profilo corrispondente per questo contesto, altrimenti usa il <em>default</em>.
+                    </div>
+                </div>
             </label>
         </div>
 
-        <div style="margin-bottom: 10px;">
-            <label>
-                <input type="checkbox" name="include_events" value="1" <?php echo !empty($profile['include_events']) ? 'checked' : ''; ?>>
-                <strong>Includi Eventi Omeka</strong> (cerca tutti gli eventi collegati tramite <code>lcp_form-event:has_environment</code>)
+        <div style="margin-bottom: 12px;">
+            <label style="display: flex; align-items: flex-start; cursor: pointer;">
+                <input type="checkbox" name="include_events" value="1" <?php echo !empty($profile['include_events']) ? 'checked' : ''; ?> style="margin-top: 3px; margin-right: 10px;">
+                <div>
+                    <strong>Includi Eventi Omeka</strong>
+                    <div style="font-size: 11px; color: #666;">
+                        Estrae tutti gli eventi collegati all'ambiente tramite la proprietà <code>lcp_form-event:has_environment</code>.
+                    </div>
+                </div>
             </label>
         </div>
 
         <div>
-            <label>
-                <input type="checkbox" name="resolve_nextcloud_webdav" value="1" <?php echo !empty($profile['resolve_nextcloud_webdav']) ? 'checked' : ''; ?>>
-                <strong>Risolvi URL Nextcloud WebDAV</strong> (converte link pubblici <code>/s/TOKEN</code> in endpoint scaricabili da Unity/Godot)
+            <label style="display: flex; align-items: flex-start; cursor: pointer;">
+                <input type="checkbox" name="resolve_nextcloud_webdav" value="1" <?php echo !empty($profile['resolve_nextcloud_webdav']) ? 'checked' : ''; ?> style="margin-top: 3px; margin-right: 10px;">
+                <div>
+                    <strong>Risolvi URL Nextcloud WebDAV</strong>
+                    <div style="font-size: 11px; color: #666;">
+                        Converte automaticamente i link pubblici Nextcloud (<code>/s/TOKEN</code>) in stream diretti WebDAV per il download da Unity, Godot o browser.
+                    </div>
+                </div>
             </label>
         </div>
     </fieldset>
 
-    <div class="field" style="margin-bottom: 20px;">
-        <label for="raw_fields" style="font-weight: bold; display: block; margin-bottom: 4px;">
-            Mappatura Campi Esportati (uno per riga)
-        </label>
-        <p style="font-size: 12px; color: #666; margin-top: 0;">
-            Sintassi: <code>proprieta_omeka => nome_campo_nel_json</code>. Esempio: <code>dcterms:creator => author</code>.
-        </p>
-        <?php
-        $lines = [];
-        foreach ($profile['fields'] ?? [] as $k => $v) {
-            $lines[] = "$k => $v";
-        }
-        $rawFieldsText = implode("\n", $lines);
-        ?>
-        <textarea id="raw_fields" name="raw_fields" rows="10" style="width: 100%; font-family: monospace; padding: 8px;"><?php echo $escape($rawFieldsText); ?></textarea>
-    </div>
-
-    <div style="display: flex; gap: 10px;">
-        <button type="submit" class="button button-primary">Salva Profilo</button>
-        <a href="<?php echo $this->url('admin/lcp-gateway'); ?>" class="button button-secondary">Annulla</a>
+    <!-- AZIONI FORM -->
+    <div style="display: flex; gap: 12px; margin-bottom: 40px;">
+        <button type="submit" class="button button-primary" style="padding: 10px 24px; font-weight: bold; font-size: 14px;">Salva Profilo</button>
+        <a href="<?php echo $this->url('admin/lcp-gateway'); ?>" class="button button-secondary" style="padding: 10px 20px; font-size: 14px;">Annulla</a>
     </div>
 </form>
+
+<!-- MODAL: CERCA E AGGIUNGI PROPRIETÀ OMEKA -->
+<div id="prop_search_modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 99999; justify-content: center; align-items: center; padding: 20px;">
+    <div style="background: #fff; width: 100%; max-width: 680px; max-height: 85vh; border-radius: 8px; display: flex; flex-direction: column; box-shadow: 0 10px 30px rgba(0,0,0,0.3); overflow: hidden;">
+        
+        <div style="padding: 16px 20px; background: #f8f8f8; border-bottom: 1px solid #ddd; display: flex; justify-content: space-between; align-items: center;">
+            <div>
+                <h3 style="margin: 0; font-size: 16px;">Aggiungi Proprietà da Omeka S</h3>
+                <span id="prop_total_badge" style="color: #666; font-size: 11px;">Caricamento catalogo...</span>
+            </div>
+            <button type="button" id="btn_close_modal" style="background: none; border: none; font-size: 20px; cursor: pointer; color: #888;">&times;</button>
+        </div>
+
+        <div style="padding: 12px 20px; border-bottom: 1px solid #eee; background: #fff;">
+            <input type="text" id="prop_search_input" placeholder="🔍 Cerca proprietà (es. title, description, uri, date...)" style="width: 100%; padding: 10px 14px; font-size: 14px; border: 1px solid #ccc; border-radius: 4px;">
+        </div>
+
+        <div id="prop_search_results" style="padding: 10px 20px; overflow-y: auto; flex: 1;">
+            <!-- Popolato dinamicamente -->
+        </div>
+
+        <div style="padding: 12px 20px; background: #f8f8f8; border-top: 1px solid #ddd; text-align: right;">
+            <button type="button" id="btn_close_modal_footer" class="button button-secondary" style="padding: 6px 16px;">Chiudi</button>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const resourceTemplates = <?php echo json_encode($resourceTemplates, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP); ?>;
+    const allProperties = <?php echo json_encode($allProperties, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP); ?>;
+    let currentFields = <?php echo json_encode($profile['fields'] ?? new \stdClass(), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP); ?>;
+    if (Array.isArray(currentFields)) {
+        currentFields = {};
+    }
+
+    const isNew = <?php echo $isNew ? 'true' : 'false'; ?>;
+    const rcSelect = document.getElementById('resource_class');
+    const templateStatusContent = document.getElementById('template_status_content');
+    const templatePickerContainer = document.getElementById('template_picker_container');
+    const templatePickerSelect = document.getElementById('template_picker_select');
+    const fieldsTbody = document.getElementById('fields_tbody');
+    const fieldsJsonInput = document.getElementById('fields_json');
+    const hiddenFieldInputs = document.getElementById('hidden_field_inputs');
+
+    const modal = document.getElementById('prop_search_modal');
+    const searchInput = document.getElementById('prop_search_input');
+    const searchResults = document.getElementById('prop_search_results');
+    const propTotalBadge = document.getElementById('prop_total_badge');
+
+    if (propTotalBadge) {
+        propTotalBadge.textContent = `${allProperties.length} proprietà disponibili in Omeka S`;
+    }
+
+    // Mappa veloce per trovare label da termine
+    const propertyMap = {};
+    allProperties.forEach(p => {
+        propertyMap[p.term] = p.label || p.term;
+    });
+
+    // Sincronizza stato JSON e campi nascosti
+    function syncFields() {
+        fieldsJsonInput.value = JSON.stringify(currentFields);
+        
+        let html = '';
+        Object.entries(currentFields).forEach(([term, label]) => {
+            html += `<input type="hidden" name="field_terms[]" value="${escapeHtml(term)}">`;
+            html += `<input type="hidden" name="field_labels[]" value="${escapeHtml(label)}">`;
+        });
+        hiddenFieldInputs.innerHTML = html;
+        renderFieldsTable();
+    }
+
+    function renderFieldsTable() {
+        const terms = Object.keys(currentFields);
+        if (terms.length === 0) {
+            fieldsTbody.innerHTML = `
+                <tr>
+                    <td colspan="4" style="padding: 24px; text-align: center; color: #888;">
+                        <em>Nessun campo selezionato. Fai click su <strong>+ Aggiungi Campo</strong> per selezionare proprietà da Omeka.</em>
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+
+        let rows = '';
+        terms.forEach((term, idx) => {
+            const label = currentFields[term] || propertyMap[term] || term;
+            rows += `
+                <tr style="border-bottom: 1px solid #eee;">
+                    <td style="padding: 8px; color: #888; font-size: 12px;">${idx + 1}</td>
+                    <td style="padding: 8px;">
+                        <code style="font-weight: bold; color: #1e3a8a;">${escapeHtml(term)}</code>
+                    </td>
+                    <td style="padding: 8px;">
+                        <span style="font-weight: 600; color: #333;">${escapeHtml(label)}</span>
+                    </td>
+                    <td style="padding: 8px; text-align: right;">
+                        <button type="button" class="button button-delete" data-term="${escapeHtml(term)}" style="padding: 3px 8px; font-size: 11px;">
+                            &times; Rimuovi
+                        </button>
+                    </td>
+                </tr>
+            `;
+        });
+        fieldsTbody.innerHTML = rows;
+
+        // Listener rimozione
+        fieldsTbody.querySelectorAll('.button-delete').forEach(btn => {
+            btn.addEventListener('click', function () {
+                const term = this.getAttribute('data-term');
+                delete currentFields[term];
+                syncFields();
+            });
+        });
+    }
+
+    // Gestione Selezione Resource Class e corrispondenti Templates (Step 1 e Step 2)
+    function onResourceClassChange(isManualChange = false) {
+        const selectedOption = rcSelect.options[rcSelect.selectedIndex];
+        const selectedTerm = rcSelect.value;
+        const selectedId = selectedOption ? parseInt(selectedOption.getAttribute('data-id'), 10) : null;
+
+        if (selectedTerm === '*') {
+            templateStatusContent.innerHTML = '<em>Profilo generico (*): nessun template associato. Inizia con una lista vuota o aggiungi proprietà manualmente.</em>';
+            templatePickerContainer.style.display = 'none';
+            if (isManualChange && Object.keys(currentFields).length === 0) {
+                syncFields();
+            }
+            return;
+        }
+
+        // Cerca template corrispondenti per termine o id
+        const matchedTemplates = resourceTemplates.filter(t => {
+            if (selectedTerm && t.resource_class_term && t.resource_class_term.toLowerCase() === selectedTerm.toLowerCase()) {
+                return true;
+            }
+            if (selectedId && t.resource_class_id === selectedId) {
+                return true;
+            }
+            return false;
+        });
+
+        if (matchedTemplates.length === 0) {
+            templateStatusContent.innerHTML = `<span style="color: #666;">ℹ️ Nessun Resource Template associato alla classe <code>${escapeHtml(selectedTerm)}</code>. La lista dei campi parte vuota: usa il pulsante sottostante per aggiungere i campi.</span>`;
+            templatePickerContainer.style.display = 'none';
+            if (isManualChange && isNew) {
+                currentFields = {};
+                syncFields();
+            }
+        } else if (matchedTemplates.length === 1) {
+            const tmpl = matchedTemplates[0];
+            templateStatusContent.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <strong style="color: #0d47a1;">✓ Resource Template trovato:</strong>
+                        <span>${escapeHtml(tmpl.label)}</span>
+                        <span style="color: #666; font-size: 11px;">(${tmpl.properties.length} proprietà di base)</span>
+                    </div>
+                    <button type="button" id="btn_reload_single_template" class="button button-secondary" style="padding: 3px 8px; font-size: 11px;">
+                        Carica proprietà dal template
+                    </button>
+                </div>
+            `;
+            templatePickerContainer.style.display = 'none';
+
+            document.getElementById('btn_reload_single_template').addEventListener('click', function () {
+                loadPropertiesFromTemplate(tmpl);
+            });
+
+            // Se è un nuovo profilo appena iniziato, carica subito i campi di base
+            if (isManualChange && isNew && Object.keys(currentFields).length === 0) {
+                loadPropertiesFromTemplate(tmpl);
+            }
+        } else {
+            // Più di un template disponibile
+            templateStatusContent.innerHTML = `
+                <strong style="color: #e65100;">Trovati ${matchedTemplates.length} Resource Template per questa classe.</strong>
+                <span style="color: #666;">Seleziona da quale template partire per precompilare le proprietà:</span>
+            `;
+            templatePickerContainer.style.display = 'block';
+
+            let optionsHtml = '<option value="">-- Seleziona un Template --</option>';
+            optionsHtml += '<option value="__empty__">-- Nessun template (lista vuota) --</option>';
+            matchedTemplates.forEach(t => {
+                optionsHtml += `<option value="${t.id}">${escapeHtml(t.label)} (${t.properties.length} proprietà)</option>`;
+            });
+            templatePickerSelect.innerHTML = optionsHtml;
+        }
+    }
+
+    templatePickerSelect.addEventListener('change', function () {
+        const val = this.value;
+        if (!val) return;
+        if (val === '__empty__') {
+            currentFields = {};
+            syncFields();
+            return;
+        }
+        const selectedId = parseInt(val, 10);
+        const tmpl = resourceTemplates.find(t => t.id === selectedId);
+        if (tmpl) {
+            loadPropertiesFromTemplate(tmpl);
+        }
+    });
+
+    function loadPropertiesFromTemplate(tmpl) {
+        currentFields = {};
+        tmpl.properties.forEach(p => {
+            currentFields[p.term] = p.label || p.term;
+        });
+        syncFields();
+    }
+
+    rcSelect.addEventListener('change', function () {
+        onResourceClassChange(true);
+    });
+
+    // Inizializza visualizzazione template e tabella campi al caricamento
+    onResourceClassChange(false);
+    renderFieldsTable();
+
+    // MODAL DI RICERCA PROPRIETÀ
+    function openModal() {
+        modal.style.display = 'flex';
+        searchInput.value = '';
+        renderSearchResults('');
+        setTimeout(() => searchInput.focus(), 50);
+    }
+
+    function closeModal() {
+        modal.style.display = 'none';
+    }
+
+    document.querySelectorAll('.btn-open-search').forEach(b => {
+        b.addEventListener('click', openModal);
+    });
+    document.getElementById('btn_close_modal').addEventListener('click', closeModal);
+    document.getElementById('btn_close_modal_footer').addEventListener('click', closeModal);
+    modal.addEventListener('click', function (e) {
+        if (e.target === modal) closeModal();
+    });
+
+    searchInput.addEventListener('input', function () {
+        renderSearchResults(this.value.trim().toLowerCase());
+    });
+
+    function renderSearchResults(query) {
+        let filtered = allProperties;
+        if (query) {
+            filtered = allProperties.filter(p => {
+                return (p.term && p.term.toLowerCase().includes(query)) ||
+                       (p.label && p.label.toLowerCase().includes(query)) ||
+                       (p.vocab && p.vocab.toLowerCase().includes(query));
+            });
+        }
+
+        if (filtered.length === 0) {
+            searchResults.innerHTML = `<div style="padding: 24px; text-align: center; color: #888;">Nessuna proprietà corrisponde alla ricerca: "${escapeHtml(query)}"</div>`;
+            return;
+        }
+
+        let html = '<div style="display: flex; flex-direction: column; gap: 8px;">';
+        filtered.slice(0, 100).forEach(p => {
+            const isAlreadyAdded = !!currentFields[p.term];
+            html += `
+                <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border: 1px solid #eee; border-radius: 4px; background: ${isAlreadyAdded ? '#f9f9f9' : '#fff'};">
+                    <div style="flex: 1; padding-right: 12px;">
+                        <div style="font-weight: bold; font-size: 14px; color: ${isAlreadyAdded ? '#888' : '#222'};">
+                            ${escapeHtml(p.label)}
+                        </div>
+                        <div style="font-size: 12px; margin-top: 2px;">
+                            <code style="color: #1e3a8a; font-weight: 600;">${escapeHtml(p.term)}</code>
+                            ${p.vocab ? `<span style="margin-left: 8px; color: #777; font-size: 11px; background: #eaeaea; padding: 1px 6px; border-radius: 3px;">${escapeHtml(p.vocab)}</span>` : ''}
+                        </div>
+                    </div>
+                    <div>
+                        ${isAlreadyAdded ? 
+                            '<span style="color: #2e7d32; font-weight: bold; font-size: 12px;">✓ Aggiunto</span>' : 
+                            `<button type="button" class="button button-primary btn-add-prop" data-term="${escapeHtml(p.term)}" data-label="${escapeHtml(p.label)}" style="padding: 4px 12px; font-size: 12px;">+ Aggiungi</button>`
+                        }
+                    </div>
+                </div>
+            `;
+        });
+        if (filtered.length > 100) {
+            html += `<div style="text-align: center; color: #888; font-size: 12px; padding: 8px;">Mostrati 100 risultati su ${filtered.length}. Digita per affinare la ricerca.</div>`;
+        }
+        html += '</div>';
+
+        searchResults.innerHTML = html;
+
+        searchResults.querySelectorAll('.btn-add-prop').forEach(btn => {
+            btn.addEventListener('click', function () {
+                const term = this.getAttribute('data-term');
+                const label = this.getAttribute('data-label') || term;
+                currentFields[term] = label;
+                syncFields();
+                // Ricarica la vista dei risultati per aggiornare lo stato del pulsante
+                renderSearchResults(searchInput.value.trim().toLowerCase());
+            });
+        });
+    }
+
+    function escapeHtml(str) {
+        if (!str) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    }
+});
+</script>

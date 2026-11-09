@@ -31,21 +31,34 @@ class ApiController extends AbstractActionController
 
         if ($id <= 0) {
             $response->setStatusCode(400);
-            $response->getHeaders()->addHeaderLine('Content-Type', 'application/json; charset=utf-8');
+            $response->getHeaders()->addHeaderLine('Content-Type', 'application/ld+json; charset=utf-8');
             $response->setContent(json_encode([
-                'ok' => false,
+                '@context' => 'https://schema.org',
                 'error' => 'Invalid or missing Item ID.'
             ], JSON_PRETTY_PRINT));
             return $response;
         }
 
-        $data = $this->treeExtractor->extract($id, $profileTarget);
+        try {
+            $data = $this->treeExtractor->extract($id, $profileTarget);
+        } catch (\Throwable $e) {
+            $response->setStatusCode(500);
+            $response->getHeaders()->addHeaderLine('Content-Type', 'application/ld+json; charset=utf-8');
+            $response->setContent(json_encode([
+                '@context' => 'https://schema.org',
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => explode("\n", $e->getTraceAsString())
+            ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            return $response;
+        }
 
-        if (empty($data['ok'])) {
+        if (isset($data['error'])) {
             $response->setStatusCode(404);
         }
 
-        $response->getHeaders()->addHeaderLine('Content-Type', 'application/json; charset=utf-8');
+        $response->getHeaders()->addHeaderLine('Content-Type', 'application/ld+json; charset=utf-8');
         $response->setContent(json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
         return $response;
     }

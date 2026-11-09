@@ -73,26 +73,32 @@ class ProfileManager
         $targetProfile = strtolower(trim($targetProfile ?: 'default'));
 
         $getContext = function(array $p): string {
-            return strtolower(trim($p['context'] ?? $p['profile_target'] ?? 'default'));
+            return strtolower(trim((string)($p['context'] ?? $p['profile_target'] ?? 'default')));
         };
 
         // 1. Exact match on resource class and context
         if ($resourceClassTerm) {
             foreach ($profiles as $p) {
                 if ($getContext($p) === $targetProfile) {
-                    if (strcasecmp($p['resource_class'], $resourceClassTerm) === 0) {
+                    $pRc = (string)($p['resource_class'] ?? '');
+                    if ($pRc !== '' && strcasecmp($pRc, $resourceClassTerm) === 0) {
                         return $p;
                     }
                 }
             }
 
             // 2. Loose match (e.g. "Ambiente" matching "lcp_form:Ambiente")
-            $cleanTerm = strtolower(substr($resourceClassTerm, strpos($resourceClassTerm, ':') !== false ? strpos($resourceClassTerm, ':') + 1 : 0));
+            $colonPos = strpos($resourceClassTerm, ':');
+            $cleanTerm = strtolower($colonPos !== false ? substr($resourceClassTerm, $colonPos + 1) : $resourceClassTerm);
             foreach ($profiles as $p) {
                 if ($getContext($p) === $targetProfile) {
-                    $pTerm = strtolower(substr($p['resource_class'], strpos($p['resource_class'], ':') !== false ? strpos($p['resource_class'], ':') + 1 : 0));
-                    if ($cleanTerm === $pTerm) {
-                        return $p;
+                    $pRc = (string)($p['resource_class'] ?? '');
+                    if ($pRc !== '') {
+                        $pColon = strpos($pRc, ':');
+                        $pTerm = strtolower($pColon !== false ? substr($pRc, $pColon + 1) : $pRc);
+                        if ($cleanTerm === $pTerm) {
+                            return $p;
+                        }
                     }
                 }
             }
@@ -100,14 +106,17 @@ class ProfileManager
 
         // 3. Fallback to wildcard '*' for this target context
         foreach ($profiles as $p) {
-            if ($p['resource_class'] === '*' && $getContext($p) === $targetProfile) {
+            $pRc = (string)($p['resource_class'] ?? '');
+            if ($pRc === '*' && $getContext($p) === $targetProfile) {
                 return $p;
             }
         }
 
         // 4. Default fallback: search for profile with id 'default' or context 'default'
         foreach ($profiles as $p) {
-            if ($p['id'] === 'default' || $getContext($p) === 'default' || strcasecmp($p['name'] ?? '', 'default') === 0) {
+            $pId = (string)($p['id'] ?? '');
+            $pName = (string)($p['name'] ?? '');
+            if ($pId === 'default' || $getContext($p) === 'default' || strcasecmp($pName, 'default') === 0) {
                 return $p;
             }
         }

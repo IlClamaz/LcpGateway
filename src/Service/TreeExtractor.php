@@ -16,7 +16,7 @@ class TreeExtractor
     }
 
     /**
-     * Extracts an item and its associated graph based on the item's resource class and requested target profile context.
+     * Extracts an item and its associated graph as a nested JSON-LD document.
      */
     public function extract(int $itemId, string $targetProfile = 'default'): array
     {
@@ -24,80 +24,59 @@ class TreeExtractor
             $rootItem = $this->api->read('items', $itemId)->getContent();
         } catch (\Exception $e) {
             return [
+                '@context' => 'https://schema.org',
                 'error' => "Item #$itemId not found: " . $e->getMessage(),
             ];
         }
 
-        $resourceClass = $rootItem->resourceClass();
-        $classTerm = $resourceClass ? $resourceClass->term() : null;
-        $profile = $this->profileManager->resolveProfile($classTerm, $targetProfile);
-
-        // If composite entity (e.g. Environment or include_tree is true)
-        if (!empty($profile['include_tree'])) {
-            $tree = [];
-            $queue = [$itemId];
-            $seen = [$itemId => true];
-
-            while (!empty($queue)) {
-                $currId = array_shift($queue);
-                try {
-                    $item = ($currId === $itemId) ? $rootItem : $this->api->read('items', $currId)->getContent();
-                } catch (\Exception $e) {
-                    continue;
-                }
-
-                $cClass = $item->resourceClass();
-                $cTerm = $cClass ? $cClass->term() : null;
-                // Hierarchically resolve child profile with the same target context, or fallback to default
-                $cProfile = ($currId === $itemId) ? $profile : $this->profileManager->resolveProfile($cTerm, $targetProfile);
-
-                $extracted = $this->normalizeItem($item, $cProfile);
-
-                // Discover components and areas
-                $componentIds = $this->extractResourceIds($item, 'lcp_form:is_composed_of_f');
-                $areaIds = $this->extractResourceIds($item, 'lcp_form:has_participatory_area_f');
-
-                $extracted['components'] = $componentIds;
-                $extracted['areas'] = $areaIds;
-                $tree[$currId] = $extracted;
-
-                foreach (array_merge($componentIds, $areaIds) as $childId) {
-                    if (!isset($seen[$childId])) {
-                        $seen[$childId] = true;
-                        $queue[] = $childId;
-                    }
-                }
-            }
-
-            $result = [
-                'tree' => $tree,
-            ];
-
-            // Extract Environment Events if requested
-            if (!empty($profile['include_events'])) {
-                $result['events'] = $this->extractEventsForEnvironment($itemId);
-            }
-
-            return $result;
-        }
-
-        // Single Item Extraction (clean output with only configured fields)
-        return [
-            'item' => $this->normalizeItem($rootItem, $profile),
-        ];
+        $visited = [];
+        return $this->extractItemJsonLd($rootItem, $targetProfile, $visited, true);
     }
 
     /**
-     * Normalizes an ItemRepresentation into clean key-value pairs using native property labels.
+     * Recursively extracts an ItemRepresentation into a nested JSON-LD node.
      */
-    public function normalizeItem(ItemRepresentation $item, array $profile): array
+    public function extractItemJsonLd(ItemRepresentation $item, string $targetProfile, array &$visited, bool $isRoot = false): array
     {
+        $id = $item->id();
+        if (isset($visited[$id])) {
+            return [
+                '@id' => $item->apiUrl(),
+                'id' => $id,
+            ];
+        }
+        $visited[$id] = true;
+
+        $rc = $item->resourceClass();
+        $classTerm = $rc ? $rc->term() : null;
+        $profile = $this->profileManager->resolveProfile($classTerm, $targetProfile);
+
+        $node = [];
+
+        // In JSON-LD, @context is placed at root of the document
+        if ($isRoot) {
+            $parsedHost = parse_url($item->apiUrl(), PHP_URL_HOST);
+            $parsedScheme = parse_url($item->apiUrl(), PHP_URL_SCHEME) ?: 'https';
+            $parsedPort = parse_url($item->apiUrl(), PHP_URL_PORT);
+            $baseUrl = $parsedScheme . '://' . $parsedHost . ($parsedPort ? ':' . $parsedPort : '');
+            $node['@context'] = $baseUrl . '/api-context';
+        }
+
+        $node['@id'] = $item->apiUrl();
+
+        $types = ['o:Item'];
+        if ($classTerm) {
+            $types[] = $classTerm;
+        }
+        $node['@type'] = $types;
+        $node['id'] = $id;
+
         $fields = $profile['fields'] ?? [];
         $resolveDav = !empty($profile['resolve_nextcloud_webdav']);
-        
-        $out = [
-            'id' => $item->id(),
-        ];
+        $includeTree = !empty($profile['include_tree']);
+
+        $componentIds = [];
+        $areaIds = [];
 
         foreach ($fields as $omekaProperty => $fieldLabel) {
             if (empty($fieldLabel)) {
@@ -105,11 +84,10 @@ class TreeExtractor
             }
 
             if ($omekaProperty === 'o:id') {
-                $out[$fieldLabel] = $item->id();
                 continue;
             }
             if ($omekaProperty === 'o:title') {
-                $out[$fieldLabel] = $item->displayTitle();
+                $node[$fieldLabel] = $item->displayTitle();
                 continue;
             }
 
@@ -117,36 +95,102 @@ class TreeExtractor
             $vals = $item->value($omekaProperty, ['all' => true]);
             if (empty($vals)) {
                 if ($omekaProperty === 'dcterms:title') {
-                    $out[$fieldLabel] = $item->displayTitle();
+                    $node[$fieldLabel] = $item->displayTitle();
                 } else {
-                    $out[$fieldLabel] = null;
+                    $node[$fieldLabel] = null;
                 }
                 continue;
             }
 
-            // Nextcloud WebDAV URL resolution if enabled
-            if ($resolveDav && (str_ends_with($omekaProperty, 'has_URI') || stripos($fieldLabel, 'uri') !== false || stripos($fieldLabel, 'url') !== false)) {
-                $uri = (string)$vals[0]->uri();
-                if (empty($uri)) {
-                    $uri = (string)$vals[0]->value();
+            $extractedVals = [];
+            $isRelationProperty = str_ends_with($omekaProperty, 'has_participatory_area_f') || str_ends_with($omekaProperty, 'is_composed_of_f');
+
+            foreach ($vals as $v) {
+                // 1. Resource reference (linked Item)
+                $res = $v->valueResource();
+                if ($res) {
+                    if (str_ends_with($omekaProperty, 'has_participatory_area_f')) {
+                        $areaIds[] = $res->id();
+                    }
+                    if (str_ends_with($omekaProperty, 'is_composed_of_f')) {
+                        $componentIds[] = $res->id();
+                    }
+
+                    if ($includeTree) {
+                        $childItem = null;
+                        if ($res instanceof ItemRepresentation) {
+                            $childItem = $res;
+                        } else {
+                            try {
+                                $childItem = $this->api->read('items', $res->id())->getContent();
+                            } catch (\Exception $e) {
+                                $childItem = null;
+                            }
+                        }
+
+                        if ($childItem) {
+                            // Recursively extract nested child JSON-LD node
+                            $extractedVals[] = $this->extractItemJsonLd($childItem, $targetProfile, $visited, false);
+                        } else {
+                            $extractedVals[] = [
+                                '@id' => $res->apiUrl(),
+                                'id' => $res->id(),
+                            ];
+                        }
+                    } else {
+                        // Leaf/flat reference by ID
+                        $extractedVals[] = $res->id();
+                    }
+                    continue;
                 }
-                $out[$fieldLabel] = $this->resolveNextcloudWebDavUrl($uri);
-                continue;
+
+                // 2. URI value
+                $uri = $v->uri();
+                if (!empty($uri)) {
+                    if ($resolveDav) {
+                        $extractedVals[] = $this->resolveNextcloudWebDavUrl($uri);
+                    } else {
+                        $extractedVals[] = $uri;
+                    }
+                    continue;
+                }
+
+                // 3. Literal / Custom vocabulary / Text value
+                $strVal = (string)$v->value();
+                if ($resolveDav && (str_ends_with($omekaProperty, 'has_URI') || stripos($fieldLabel, 'uri') !== false || stripos($fieldLabel, 'url') !== false)) {
+                    $extractedVals[] = $this->resolveNextcloudWebDavUrl($strVal);
+                } else {
+                    $extractedVals[] = $strVal;
+                }
             }
 
-            if (count($vals) === 1) {
-                $v = $vals[0];
-                $out[$fieldLabel] = $v->uri() ?: (string)$v->value();
+            // Keep relation collections as arrays even if count is 1
+            if ($isRelationProperty) {
+                $node[$fieldLabel] = $extractedVals;
+            } elseif (count($extractedVals) === 1) {
+                $node[$fieldLabel] = $extractedVals[0];
             } else {
-                $arr = [];
-                foreach ($vals as $v) {
-                    $arr[] = $v->uri() ?: (string)$v->value();
-                }
-                $out[$fieldLabel] = $arr;
+                $node[$fieldLabel] = $extractedVals;
             }
         }
 
-        return $out;
+        if (!empty($componentIds) || !empty($areaIds) || $includeTree) {
+            $node['components'] = array_values(array_unique($componentIds));
+            $node['areas'] = array_values(array_unique($areaIds));
+        }
+
+        // Attach Environment Events if requested on root
+        if ($isRoot && !empty($profile['include_events'])) {
+            $events = $this->extractEventsForEnvironment($id);
+            foreach ($events as &$ev) {
+                $ev = array_merge([
+                    '@type' => 'lcp_form-event:Event',
+                ], $ev);
+            }
+            $node['events'] = $events;
+        }
+
+        return $node;
     }
 
     /**
@@ -169,6 +213,7 @@ class TreeExtractor
 
             foreach ($items as $evItem) {
                 $events[] = [
+                    '@id' => $evItem->apiUrl(),
                     'id' => $evItem->id(),
                     'title' => $evItem->displayTitle(),
                     'environment_id' => $environmentId,

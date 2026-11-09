@@ -1,0 +1,83 @@
+<?php
+$escape = $this->plugin('escapeHtml');
+$this->htmlElement('body')->appendAttribute('class', 'lcp-gateway-admin');
+?>
+
+<div class="breadcrumbs">
+    <a href="<?php echo $this->url('admin'); ?>">Admin</a> &gt; <span>LCP Gateway</span>
+</div>
+
+<div class="page-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+    <h1>LCP Gateway &bull; Profili di Esportazione</h1>
+    <div>
+        <a href="<?php echo $this->url('admin/lcp-gateway', ['action' => 'preview']); ?>" class="button button-secondary" style="margin-right: 8px;">
+            <i class="fa fa-eye"></i> Test / Anteprima Live
+        </a>
+        <a href="<?php echo $this->url('admin/lcp-gateway', ['action' => 'edit']); ?>" class="button button-primary" style="margin-right: 8px;">
+            <i class="fa fa-plus"></i> Nuovo Profilo
+        </a>
+        <a href="<?php echo $this->url('admin/lcp-gateway', ['action' => 'resetDefaults']); ?>" class="button button-delete" onclick="return confirm('Sei sicuro di voler reimpostare i profili ai valori di fabbrica?');">
+            Reimposta Default
+        </a>
+    </div>
+</div>
+
+<p>
+    Questo modulo espone l'endpoint polimorfico <code>/api/lcp/{item_id}?profile={engine|web}</code>. 
+    In base alla <strong>Resource Class</strong> dell'oggetto richiesto, il modulo applicherà automaticamente la regola corrispondente.
+</p>
+
+<table class="tablesaw" data-tablesaw-mode="stack" style="width: 100%; border-collapse: collapse; margin-top: 16px;">
+    <thead>
+        <tr style="background: #f7f7f7; text-align: left; border-bottom: 2px solid #ddd;">
+            <th style="padding: 10px;">Nome Profilo</th>
+            <th style="padding: 10px;">Target</th>
+            <th style="padding: 10px;">Resource Class</th>
+            <th style="padding: 10px;">Opzioni</th>
+            <th style="padding: 10px;">Campi Mappati</th>
+            <th style="padding: 10px; text-align: right;">Azioni</th>
+        </tr>
+    </thead>
+    <tbody>
+        <?php if (empty($profiles)): ?>
+            <tr>
+                <td colspan="6" style="padding: 20px; text-align: center; color: #888;">Nessun profilo configurato. Fai click su "Reimposta Default".</td>
+            </tr>
+        <?php else: ?>
+            <?php foreach ($profiles as $p): ?>
+                <tr style="border-bottom: 1px solid #eee;">
+                    <td style="padding: 12px 10px; font-weight: bold;">
+                        <?php echo $escape($p['name']); ?>
+                        <div style="font-size: 11px; color: #666; font-weight: normal; margin-top: 4px;">
+                            <?php echo $escape($p['description'] ?? ''); ?>
+                        </div>
+                    </td>
+                    <td style="padding: 12px 10px;">
+                        <span style="display: inline-block; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 11px; <?php echo $p['profile_target'] === 'engine' ? 'background: #e3f2fd; color: #0d47a1;' : 'background: #e8f5e9; color: #1b5e20;'; ?>">
+                            <?php echo strtoupper($escape($p['profile_target'])); ?>
+                        </span>
+                    </td>
+                    <td style="padding: 12px 10px;">
+                        <code><?php echo $escape($p['resource_class']); ?></code>
+                    </td>
+                    <td style="padding: 12px 10px; font-size: 12px;">
+                        <?php if (!empty($p['include_tree'])): ?><span title="Include sottoalbero ricorsivo">&#127795; Tree</span><br><?php endif; ?>
+                        <?php if (!empty($p['include_events'])): ?><span title="Include eventi collegati">&#9889; Events</span><br><?php endif; ?>
+                        <?php if (!empty($p['resolve_nextcloud_webdav'])): ?><span title="Risolve Nextcloud in WebDAV">&#9729; WebDAV</span><?php endif; ?>
+                    </td>
+                    <td style="padding: 12px 10px; font-size: 12px;">
+                        <?php echo count($p['fields'] ?? []); ?> campi
+                    </td>
+                    <td style="padding: 12px 10px; text-align: right; white-space: nowrap;">
+                        <a href="<?php echo $this->url('admin/lcp-gateway', ['action' => 'edit', 'id' => $p['id']]); ?>" class="button button-secondary" style="padding: 4px 8px; font-size: 12px;">
+                            Modifica
+                        </a>
+                        <a href="<?php echo $this->url('admin/lcp-gateway', ['action' => 'delete', 'id' => $p['id']]); ?>" class="button button-delete" style="padding: 4px 8px; font-size: 12px;" onclick="return confirm('Eliminare questo profilo?');">
+                            Elimina
+                        </a>
+                    </td>
+                </tr>
+            <?php endforeach; ?>
+        <?php endif; ?>
+    </tbody>
+</table>

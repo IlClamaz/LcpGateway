@@ -1,0 +1,93 @@
+<?php
+$escape = $this->plugin('escapeHtml');
+?>
+
+<div class="breadcrumbs">
+    <a href="<?php echo $this->url('admin'); ?>">Admin</a> &gt; 
+    <a href="<?php echo $this->url('admin/lcp-gateway'); ?>">LCP Gateway</a> &gt; 
+    <span><?php echo $isNew ? 'Nuovo Profilo' : 'Modifica Profilo'; ?></span>
+</div>
+
+<h1><?php echo $isNew ? 'Nuovo Profilo di Esportazione' : 'Modifica Profilo: ' . $escape($profile['name']); ?></h1>
+
+<form method="post" style="max-width: 800px; margin-top: 20px;">
+    <div class="field" style="margin-bottom: 16px;">
+        <label for="name" style="font-weight: bold; display: block; margin-bottom: 4px;">Nome Profilo</label>
+        <input type="text" id="name" name="name" value="<?php echo $escape($profile['name']); ?>" required style="width: 100%; padding: 8px;">
+    </div>
+
+    <div class="field" style="margin-bottom: 16px;">
+        <label for="description" style="font-weight: bold; display: block; margin-bottom: 4px;">Descrizione / Scopo</label>
+        <input type="text" id="description" name="description" value="<?php echo $escape($profile['description'] ?? ''); ?>" style="width: 100%; padding: 8px;">
+    </div>
+
+    <div style="display: flex; gap: 20px; margin-bottom: 16px;">
+        <div class="field" style="flex: 1;">
+            <label for="profile_target" style="font-weight: bold; display: block; margin-bottom: 4px;">Target Profilo</label>
+            <select id="profile_target" name="profile_target" style="width: 100%; padding: 8px;">
+                <option value="engine" <?php echo ($profile['profile_target'] === 'engine') ? 'selected' : ''; ?>>engine (Unity / Godot offline)</option>
+                <option value="web" <?php echo ($profile['profile_target'] === 'web') ? 'selected' : ''; ?>>web (Landing Page / Web App)</option>
+            </select>
+            <small style="color: #666;">Il valore passato nel parametro query <code>?profile=...</code></small>
+        </div>
+
+        <div class="field" style="flex: 1;">
+            <label for="resource_class" style="font-weight: bold; display: block; margin-bottom: 4px;">Resource Class Omeka</label>
+            <input type="text" id="resource_class" name="resource_class" list="rc_list" value="<?php echo $escape($profile['resource_class']); ?>" required style="width: 100%; padding: 8px;">
+            <datalist id="rc_list">
+                <option value="*">Qualsiasi classe (*)</option>
+                <?php foreach ($resourceClasses as $rc): ?>
+                    <option value="<?php echo $escape($rc); ?>"><?php echo $escape($rc); ?></option>
+                <?php endforeach; ?>
+            </datalist>
+            <small style="color: #666;">Termine della Resource Class (es. <code>lcp_form:Ambiente</code>, <code>lcp_form:Narrativa</code> o <code>*</code>)</small>
+        </div>
+    </div>
+
+    <fieldset style="border: 1px solid #ccc; padding: 16px; border-radius: 4px; margin-bottom: 20px;">
+        <legend style="font-weight: bold; padding: 0 6px;">Comportamento Struttura & Media</legend>
+        
+        <div style="margin-bottom: 10px;">
+            <label>
+                <input type="checkbox" name="include_tree" value="1" <?php echo !empty($profile['include_tree']) ? 'checked' : ''; ?>>
+                <strong>Estrai albero ricorsivo</strong> (percorri componenti e aree collegate se l'oggetto è un contenitore/ambiente)
+            </label>
+        </div>
+
+        <div style="margin-bottom: 10px;">
+            <label>
+                <input type="checkbox" name="include_events" value="1" <?php echo !empty($profile['include_events']) ? 'checked' : ''; ?>>
+                <strong>Includi Eventi Omeka</strong> (cerca tutti gli eventi collegati tramite <code>lcp_form-event:has_environment</code>)
+            </label>
+        </div>
+
+        <div>
+            <label>
+                <input type="checkbox" name="resolve_nextcloud_webdav" value="1" <?php echo !empty($profile['resolve_nextcloud_webdav']) ? 'checked' : ''; ?>>
+                <strong>Risolvi URL Nextcloud WebDAV</strong> (converte link pubblici <code>/s/TOKEN</code> in endpoint scaricabili da Unity/Godot)
+            </label>
+        </div>
+    </fieldset>
+
+    <div class="field" style="margin-bottom: 20px;">
+        <label for="raw_fields" style="font-weight: bold; display: block; margin-bottom: 4px;">
+            Mappatura Campi Esportati (uno per riga)
+        </label>
+        <p style="font-size: 12px; color: #666; margin-top: 0;">
+            Sintassi: <code>proprieta_omeka => nome_campo_nel_json</code>. Esempio: <code>dcterms:creator => author</code>.
+        </p>
+        <?php
+        $lines = [];
+        foreach ($profile['fields'] ?? [] as $k => $v) {
+            $lines[] = "$k => $v";
+        }
+        $rawFieldsText = implode("\n", $lines);
+        ?>
+        <textarea id="raw_fields" name="raw_fields" rows="10" style="width: 100%; font-family: monospace; padding: 8px;"><?php echo $escape($rawFieldsText); ?></textarea>
+    </div>
+
+    <div style="display: flex; gap: 10px;">
+        <button type="submit" class="button button-primary">Salva Profilo</button>
+        <a href="<?php echo $this->url('admin/lcp-gateway'); ?>" class="button button-secondary">Annulla</a>
+    </div>
+</form>
